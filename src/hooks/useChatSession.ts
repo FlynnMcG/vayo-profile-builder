@@ -1,7 +1,10 @@
 "use client";
 
-import { useCallback, useState } from "react";
-import type { ChatMessage } from "@/lib/chat/types";
+import { useChat } from "@ai-sdk/react";
+import { DefaultChatTransport } from "ai";
+import { useCallback, useMemo } from "react";
+import type { ChatMessage } from "@/lib/chat/schema";
+import { toChatMessage, toChatRequest } from "@/lib/chat/ui-message";
 
 const WELCOME: ChatMessage = {
   id: "welcome",
@@ -10,24 +13,45 @@ const WELCOME: ChatMessage = {
     "Hi! I'm your travel assistant. Tell me about how you like to travel and I'll build your profile.",
 };
 
-const PLACEHOLDER_REPLY =
-  "The chat API isn't connected yet. Your message was received locally.";
+// The server owns chat history, so only the newest message is sent.
+const transport = new DefaultChatTransport({
+  api: "/api/chat",
+  prepareSendMessagesRequest: ({ id, messages }) => ({
+    body: toChatRequest(id, messages[messages.length - 1]),
+  }),
+});
 
-// Owns chat state for the UI. This is the seam where the AI SDK's useChat
-// will be swapped in, so components only depend on this hook's return shape.
+// Owns chat state for the UI; components only depend on this hook's shape.
 export function useChatSession() {
-  const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
+  const { messages, sendMessage, status, error } = useChat({ transport });
 
-  const sendMessage = useCallback((text: string) => {
-    const content = text.trim();
-    if (!content) return;
+  const chatMessages = useMemo(
+    () => [
+      WELCOME,
+      ...messages
+        .map(toChatMessage)
+        .filter((message): message is ChatMessage => message !== null && message.content !== ""),
+    ],
+    [messages],
+  );
 
-    setMessages((prev) => [
-      ...prev,
-      { id: crypto.randomUUID(), role: "user", content },
-      { id: crypto.randomUUID(), role: "assistant", content: PLACEHOLDER_REPLY },
-    ]);
-  }, []);
+  const send = useCallback(
+    (text: string) => {
+      const content = text.trim();
+      if (content) void sendMessage({ text: content });
+    },
+    [sendMessage],
+  );
 
-  return { messages, sendMessage, isBusy: false };
+  const isBusy = status === "submitted" || status === "streaming";
+  const lastMessage = chatMessages[chatMessages.length - 1];
+
+  return {
+    messages: chatMessages,
+    sendMessage: send,
+    isBusy,
+    // Show a typing indicator until the first reply tokens arrive.
+    isAwaitingReply: isBusy && lastMessage.role === "user",
+    error: error ? "Something went wrong reaching the assistant. Please try again." : null,
+  };
 }

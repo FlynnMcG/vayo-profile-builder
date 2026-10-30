@@ -2,14 +2,14 @@
 
 A travel profile builder powered by a provider-configurable chat assistant. As you chat, the assistant builds a profile of your travel preferences, shown in a side panel.
 
-> **Status:** The frontend is scaffolded. The chat UI and profile panel run locally with placeholder data. The chat API (Vercel AI SDK) isn't connected yet.
+> **Status:** Chat streams from the model via the Vercel AI SDK, and the server keeps the chat history in memory. The profile panel still shows placeholder data.
 
 ## Stack
 
 - [Next.js 16](https://nextjs.org/) (App Router) + TypeScript
 - Tailwind CSS v4
 - [Zod](https://zod.dev/) for schemas
-- Vercel AI SDK (planned) for multi-provider chat streaming
+- [Vercel AI SDK v7](https://ai-sdk.dev/) for multi-provider chat streaming
 - SQLite (planned) for persistence
 
 ## Prerequisites
@@ -25,25 +25,38 @@ A travel profile builder powered by a provider-configurable chat assistant. As y
    npm install
    ```
 
-2. Start the dev server:
+2. Create `.env.local` from the example and add your API key (see [Environment variables](#environment-variables)):
+
+   ```bash
+   cp .env.example .env.local
+   ```
+
+3. Start the dev server:
 
    ```bash
    npm run dev
    ```
 
-3. Open [http://localhost:3000](http://localhost:3000).
-
-Sending a message currently returns a placeholder reply, because the chat API isn't connected yet.
+4. Open [http://localhost:3000](http://localhost:3000).
 
 ### Environment variables
 
-The chat API will read provider keys from `.env.local`, which git ignores:
+Set these in `.env.local`, which git ignores:
 
-```bash
-ANTHROPIC_API_KEY=your-key-here
-```
+| Variable            | Required | Description                                                              |
+| ------------------- | -------- | ------------------------------------------------------------------------ |
+| `ANTHROPIC_API_KEY` | Yes      | API key for the default Anthropic provider                               |
+| `CHAT_MODEL`        | No       | Model as `<provider>:<model>`. Defaults to `anthropic:claude-haiku-5-5`. |
 
-The frontend doesn't need this file yet.
+## Model providers
+
+Models are resolved through an AI SDK provider registry, so the app isn't tied to a single provider. Thinking/reasoning is turned off through the AI SDK's portable `reasoning: "none"` setting.
+
+To add a provider:
+
+1. Install its package (for example, `npm install @ai-sdk/openai`).
+2. Register it in `src/server/ai/registry.ts`.
+3. Set its API key env var and point `CHAT_MODEL` at it (for example, `openai:<model-id>`).
 
 ## Scripts
 
@@ -58,13 +71,24 @@ The frontend doesn't need this file yet.
 
 ```
 src/
-  app/                 Next.js routes (page, layout, global styles)
+  app/
+    api/chat/route.ts  POST /api/chat: validates the request, streams the reply
+    ...                Page, layout, global styles
   components/
     chat/              Chat UI: ChatPanel, MessageList, ChatInput
     profile/           ProfilePanel side panel
   hooks/
-    useChatSession.ts  Chat state; the AI SDK's useChat will replace this
-  lib/
-    chat/              Chat message types
+    useChatSession.ts  Wraps the AI SDK's useChat; sends only the newest message
+  lib/                 Shared by client and server
+    chat/              Zod chat schemas and UIMessage adapters
     profile/           Zod profile schema, display mapping, placeholder data
+  server/              Server-only code (guarded by `server-only`)
+    ai/                Provider registry, model config, system prompt
+    chat/              Chat service and chat history store (in memory for now)
 ```
+
+### How a chat turn works
+
+1. The client sends only the newest message: `{ chatId, message: { id, role, content } }`.
+2. The route validates the request with Zod and calls the chat service.
+3. The service appends the message to the server-held history, streams the model's reply, and stores the reply when it finishes, even if the client disconnects.

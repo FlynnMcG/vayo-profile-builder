@@ -21,3 +21,6 @@ Simple/common libraries are fine; ask before adding anything significant to the 
 - Once we have testing up always verify with npm test before returning to me. 
 - If we are using a particular version of a framework (example: Next 16) make sure you consult the up to date docs rather than rely on memory.
 - Maintain clean code seperation and don't mix the logic into front end focused files. 
+- Maintain a transcript of my prompt and abbreviated versions of your reply/action in a PROCESS.md file. Record notable decisions or changes in DECISIONS.md (what we tried, what the tool gave back, what was kept/changed and why).
+- Use conventional commit format
+- Keep the system prompt static. Put per-turn state in the user message.

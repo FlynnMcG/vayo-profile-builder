@@ -1,14 +1,19 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import type { ChatMessage } from "@/lib/chat/types";
+import type { ChatMessage } from "@/lib/chat/schema";
 
-export function MessageList({ messages }: { messages: ChatMessage[] }) {
+interface MessageListProps {
+  messages: ChatMessage[];
+  isAwaitingReply?: boolean;
+}
+
+export function MessageList({ messages, isAwaitingReply = false }: MessageListProps) {
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, isAwaitingReply]);
 
   return (
     <div className="flex-1 overflow-y-auto px-6 py-6">
@@ -29,6 +34,13 @@ export function MessageList({ messages }: { messages: ChatMessage[] }) {
             </div>
           </li>
         ))}
+        {isAwaitingReply && (
+          <li className="flex justify-start" aria-live="polite">
+            <div className="rounded-2xl rounded-bl-sm bg-zinc-100 px-4 py-2.5 text-sm text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400">
+              Thinking…
+            </div>
+          </li>
+        )}
       </ul>
       <div ref={endRef} />
     </div>

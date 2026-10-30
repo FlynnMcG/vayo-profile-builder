@@ -12,6 +12,9 @@ export const VisaRequirementSchema = z.enum([
   "embassy_visa", // visa applied for through an embassy or consulate
 ]);
 
+// Matches the keys of averageDailyBudgetUSD so profiles can index into it.
+export const BudgetTierSchema = z.enum(["budget", "midRange", "luxury"]);
+
 export const DailyBudgetSchema = z
   .object({
     budget: z.number().int().positive(),
@@ -42,6 +45,7 @@ export const DestinationInfoSchema = z.object({
 export const DestinationUpdateSchema = DestinationInfoSchema.omit({ name: true }).partial();
 
 export type Season = z.infer<typeof SeasonSchema>;
+export type BudgetTier = z.infer<typeof BudgetTierSchema>;
 export type VisaRequirement = z.infer<typeof VisaRequirementSchema>;
 export type DestinationInfo = z.infer<typeof DestinationInfoSchema>;
 export type DestinationUpdate = z.infer<typeof DestinationUpdateSchema>;

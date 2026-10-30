@@ -9,11 +9,14 @@ import {
   type ToolSet,
 } from "ai";
 import type { ChatMessage, ChatRequest } from "@/lib/chat/schema";
+import { emptyProfile, type TravelProfile } from "@/lib/profile/schema";
 import { CHAT_REASONING, chatConfig, getChatModel } from "@/server/ai/config";
-import { CHAT_SYSTEM_PROMPT } from "@/server/ai/prompts";
+import { CHAT_SYSTEM_PROMPT, formatUserTurn } from "@/server/ai/prompts";
 import { createDestinationTools } from "@/server/ai/tools/destination-tools";
+import { createProfileTools } from "@/server/ai/tools/profile-tools";
 import { getDatabase } from "@/server/db/database";
-import { createDestinationStore } from "@/server/destinations/destination-store";
+import { createDestinationStore, type DestinationStore } from "@/server/destinations/destination-store";
+import { createProfileStore, type ProfileStore } from "@/server/profile/profile-store";
 import { createChatHistoryStore, type ChatHistoryStore } from "./history-store";
 
 // Caps tool-call round trips per turn so a confused model can't loop forever.
@@ -30,7 +33,8 @@ export class MessageAlreadyAnsweredError extends Error {
 
 export interface ChatServiceDeps {
   historyStore: ChatHistoryStore;
-  tools: ToolSet;
+  profileStore: ProfileStore;
+  destinationStore: DestinationStore;
 }
 
 // Production wiring; tests and evals pass their own (e.g. in-memory) deps.
@@ -38,12 +42,26 @@ export function getDefaultChatServiceDeps(): ChatServiceDeps {
   const db = getDatabase();
   return {
     historyStore: createChatHistoryStore(db),
-    tools: createDestinationTools(createDestinationStore(db)),
+    profileStore: createProfileStore(db),
+    destinationStore: createDestinationStore(db),
   };
 }
 
-function toModelMessage({ role, content }: ChatMessage): ModelMessage {
-  return { role, content };
+export function createChatTools({ profileStore, destinationStore }: ChatServiceDeps) {
+  return {
+    ...createProfileTools(profileStore),
+    ...createDestinationTools(destinationStore),
+  };
+}
+
+// Stored history is plain text; only the newest user message gets the
+// current profile prepended, so earlier turns don't carry stale snapshots.
+export function buildModelMessages(history: ChatMessage[], profile: TravelProfile): ModelMessage[] {
+  return history.map(({ role, content }, index) =>
+    index === history.length - 1 && role === "user"
+      ? { role, content: formatUserTurn(profile, content) }
+      : { role, content },
+  );
 }
 
 // Joins the text from every step; `text` alone is only the final step's.
@@ -57,8 +75,9 @@ function getReplyText({ content }: StreamTextEndEvent<ToolSet>): string {
 // server-held history, and stores the reply once it completes.
 export async function streamChatReply(
   { chatId, message }: ChatRequest,
-  { historyStore, tools }: ChatServiceDeps = getDefaultChatServiceDeps(),
+  deps: ChatServiceDeps = getDefaultChatServiceDeps(),
 ) {
+  const { historyStore, profileStore } = deps;
   await historyStore.appendMessage(chatId, message);
   const history = await historyStore.getMessages(chatId);
   if (history.at(-1)?.id !== message.id) throw new MessageAlreadyAnsweredError(message.id);
@@ -69,8 +88,8 @@ export async function streamChatReply(
   const result = streamText({
     model: getChatModel(),
     system: CHAT_SYSTEM_PROMPT,
-    messages: history.map(toModelMessage),
-    tools,
+    messages: buildModelMessages(history, profileStore.get() ?? emptyProfile),
+    tools: createChatTools(deps),
     stopWhen: isStepCount(MAX_STEPS),
     reasoning: CHAT_REASONING,
     maxOutputTokens: chatConfig.maxOutputTokens,

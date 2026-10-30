@@ -26,7 +26,9 @@ function describeToolCall(part: ToolPart): ToolActivity {
       ? `Looked up ${input.name ?? "destination"}`
       : toolName === "listDestinations"
         ? "Browsed destinations"
-        : `Used ${toolName}`;
+        : toolName === "updateProfile"
+          ? "Updated profile"
+          : `Used ${toolName}`;
 
   const status =
     part.state === "output-available"

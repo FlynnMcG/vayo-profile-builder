@@ -4,8 +4,14 @@ import { useChatSession } from "@/hooks/useChatSession";
 import { ChatInput } from "./ChatInput";
 import { MessageList } from "./MessageList";
 
-export function ChatPanel() {
-  const { messages, sendMessage, isBusy, isAwaitingReply, error } = useChatSession();
+interface ChatPanelProps {
+  onTurnFinished?: () => void;
+}
+
+export function ChatPanel({ onTurnFinished }: ChatPanelProps) {
+  const { messages, sendMessage, isBusy, isAwaitingReply, error } = useChatSession({
+    onTurnFinished,
+  });
 
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label="Chat">

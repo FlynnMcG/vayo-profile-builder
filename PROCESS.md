@@ -172,3 +172,41 @@ Running transcript of prompts and abbreviated responses/actions. Notable decisio
 - Added `deleteChat(chatId)` to `ChatHistoryStore` (there wasn't one).
 - Confirmed the site uses the file DB (`data/vayo.db`, holding the browser chats). In-memory is only for `openDatabase()` with no path (tests/evals).
 - 52 tests passing.
+
+**Prompt:**
+> (commit message approved: `feat: add destination data, chat history, SQLite store, and destination lookup tools`)
+
+**Response/actions:**
+- Committed `ae9c09b` (not pushed).
+
+---
+
+## 12. Travel profile: schema, DB, CRUD, UI
+
+**Prompt:**
+> Ok lets start on the profile. Start with exactly the fields(reasonable translation like visa requirement to citizen for the profile) in destinations. We'll expand them before we commit. Goal for this round is defining it in the DB with CRUD, wiring the frontend to it, and testing that an update properly updates the UI. Then we're going to start building the conflict detection and resolution.
+>
+> Out of scope: Multiple profiles, dynamically adding profile fields, search by field in profile.
+
+**Response/actions:**
+- Asked two questions: the name mapping (answer: "Why not both", so `name` + `wishlist`) and the update path (answer: model tool + API).
+- Profile schema: `name`, `citizenship` (ISO alpha-2), `budgetTier`, `preferredSeasons`, `interests`, `wishlist`. Shares enums with destinations. Placeholder profile removed.
+- Migration 2: single-row `profile` table. `ProfileStore` with get/create/update(upsert)/delete. `/api/profile` with GET/PATCH/DELETE (`connection()` so the sync SQLite read isn't prerendered).
+- `updateProfile` tool with a change list (set/add/remove) via pure `applyProfileChanges`. The current profile is prepended to the newest user message each turn.
+- UI: `useProfile` hook + `ProfileBuilder` container. The panel refreshes after each turn and highlights changed fields.
+- 85 tests, including API route tests on in-memory DB. Live: one message filled 5 fields, a second did add/remove (Tokyo→Reykjavik) with only those rows highlighted, an API PATCH persisted across reload. Screenshots 04–06.
+- Spotted a conflict for next round: the model called Reykjavik good in fall, but the data says summer/winter.
+
+---
+
+## 13. Expanded profile fields
+
+**Prompt:**
+> Yeah, lets add Home airport, total cost, ideal trip types, avoid, companions, preferred climates, and travel documents(name of document, document number, name on document, array with multiple allowed).
+
+**Response/actions:**
+- Added `homeAirport` (IATA), `totalBudgetUSD`, `idealTripTypes`, `avoid`, `companions` (enum), `preferredClimates` (enum), `travelDocuments[]`. Migration 3 adds the columns (tested as a v2→v3 upgrade; the real DB upgraded with its profile intact).
+- Change ops cover the new fields. Documents use add/remove, and removal matches by name plus an optional last-4 suffix.
+- Document numbers are masked (`••••5678`) in the model context, tool results, API, and UI. Full numbers stay in SQLite.
+- Prompt lists the new fields. Display labels/formatting for each.
+- 109 tests. Live: one message set all six non-document fields; a second saved two documents, and the reply/panel showed only the last 4. Screenshots 07–08.

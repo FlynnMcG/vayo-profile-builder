@@ -24,9 +24,17 @@ const transport = new DefaultChatTransport({
 const hasVisibleContent = (message: ChatMessageView | null): message is ChatMessageView =>
   message !== null && (message.content !== "" || message.toolActivity.length > 0);
 
+interface UseChatSessionOptions {
+  // Called after each assistant reply finishes (successfully or not).
+  onTurnFinished?: () => void;
+}
+
 // Owns chat state for the UI; components only depend on this hook's shape.
-export function useChatSession() {
-  const { messages, sendMessage, status, error } = useChat({ transport });
+export function useChatSession({ onTurnFinished }: UseChatSessionOptions = {}) {
+  const { messages, sendMessage, status, error } = useChat({
+    transport,
+    onFinish: () => onTurnFinished?.(),
+  });
 
   const chatMessages = useMemo(
     () => [WELCOME, ...messages.map(toChatMessageView).filter(hasVisibleContent)],

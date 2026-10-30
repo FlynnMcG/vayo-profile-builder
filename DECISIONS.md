@@ -118,3 +118,49 @@ Notable decisions and changes. Each covers: what I was trying to do, what the to
   - Migration 3 adds the columns. A test builds a v2 database with a saved profile and upgrades it, and the real `data/vayo.db` upgraded with its profile intact.
 - **Kept/changed:** Document numbers are sensitive, so they're masked to the last 4 everywhere they leave the database (model context, tool result, API, UI), while the database keeps the full value. Because the model only sees the last 4, document removal matches by name plus an optional number suffix. Stated limits: the number still reaches the provider in the user's own message, and the database isn't encrypted (local, single user). The profile store also gained a compile-time check that every field maps to a column.
 - **Seen for next round:** `avoid: ["crowds"]` vs destinations known for "nightlife"/"markets", `preferredClimates: ["warm"]` vs a wishlist containing Reykjavik, and `budgetTier: luxury` vs `totalBudgetUSD: 4000` for a long trip. All are good conflict-detection cases.
+
+---
+
+### 12. Conflict detection and resolution (level 1: overwrites)
+
+> "Two levels of conflict detection… an automatic detection at the server level that triggers when a value is going to be overwritten… We are worried about the first one for now."
+
+- **Trying to:** Stop the assistant from silently overwriting saved preferences, and make the user confirm instead.
+- **Got back:** I reviewed the design and raised 10 gaps first. Settled answers:
+  - Lists are bot-initiated only.
+  - One document per name, with document changes counting as conflicts.
+  - An explicit per-change `userConfirmed` flag.
+  - Turn locking by user message id.
+  - Resolution is keep, accept, or custom.
+  - Stale check, partial apply, and dedupe/replace per key.
+  - No HTTP writes to the profile.
+  - No UI resolve buttons.
+- **Built:**
+  - Pure `detectOverwrites`.
+  - A `profile_conflicts` table with a partial unique index (one pending per key) that keeps resolved rows as an audit trail.
+  - A `ConflictService` that owns every profile write, inside a transaction.
+  - Tools: `updateProfile`, `reportConflict`, `resolveConflict`.
+  - `GET/POST /api/conflicts` and `POST /api/conflicts/[id]/resolve`.
+  - A notice on the conflicting field in the panel.
+- **Kept/changed:**
+  - Removed `PATCH /api/profile`: with user edits only through chat, it would have been a way around detection.
+  - Turn context is bound when the tools are created per request, so the same-turn lock is enforced by the server, not the prompt.
+  - A test caught invalid overwrites being stored as conflicts (they would fail on accept). Held and reported changes are now validated up front.
+
+---
+
+### 13. What live testing changed
+
+- **Trying to:** Check the conflict flow end to end with Haiku 5.5 (reasoning off).
+- **Got back:**
+  1. The model saw the difference in `<current_profile>` and asked the user itself without calling `updateProfile`, so nothing was recorded.
+  2. Asked to submit anyway, it used `reportConflict` for a scalar.
+  3. With reasoning off, it wrote its reasoning as visible text before tool calls ("Per guidelines, I should call updateProfile…").
+  4. It explained internals ("this message explicitly replaces…").
+  5. For a list contradiction (Tokyo vs avoid Japan) it again asked without reporting.
+- **Kept/changed:**
+  - (2) Enforced in the schema: `reportConflict` accepts only list-field changes, so single values must go through detection.
+  - (1, 5) Prompt rules with a concrete example each. A rule alone didn't work; the example did.
+  - (3) Only the text after the last tool call is shown and stored as the reply. This is structural, costs no tokens, and is applied the same way on client and server.
+  - (4) Added a "never mention tools/flags/ids" prompt rule.
+  - These are behavior risks the upcoming evals should cover: does the model call the tool rather than just asking, does it use `userConfirmed` only for explicit replacements, and does it report list contradictions.

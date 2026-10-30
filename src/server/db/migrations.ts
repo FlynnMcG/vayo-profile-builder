@@ -1,5 +1,6 @@
 import "server-only";
 import type { DatabaseSync } from "node:sqlite";
+import { ConflictSourceSchema, ConflictStatusSchema } from "@/lib/conflicts/schema";
 import { BudgetTierSchema, VisaRequirementSchema } from "@/lib/destinations/schema";
 
 const sqlList = (values: readonly string[]) => values.map((v) => `'${v}'`).join(", ");
@@ -54,6 +55,28 @@ const MIGRATIONS: string[] = [
   ALTER TABLE profile ADD COLUMN avoid TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(avoid));
   -- Stored in full (local, single user); masked before reaching the model or UI.
   ALTER TABLE profile ADD COLUMN travel_documents TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(travel_documents));
+  `,
+  `
+  CREATE TABLE profile_conflicts (
+    id TEXT PRIMARY KEY,
+    conflict_key TEXT NOT NULL,
+    field TEXT NOT NULL,
+    source TEXT NOT NULL CHECK (source IN (${sqlList(ConflictSourceSchema.options)})),
+    existing_value TEXT NOT NULL CHECK (json_valid(existing_value)),
+    proposed_change TEXT NOT NULL CHECK (json_valid(proposed_change)),
+    reason TEXT,
+    status TEXT NOT NULL CHECK (status IN (${sqlList(ConflictStatusSchema.options)})),
+    resolution TEXT CHECK (resolution IS NULL OR json_valid(resolution)),
+    chat_id TEXT,
+    raised_in_message_id TEXT,
+    resolved_in_message_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    resolved_at TEXT
+  );
+
+  -- At most one pending conflict per key (field, or document name).
+  CREATE UNIQUE INDEX profile_conflicts_one_pending_per_key
+    ON profile_conflicts (conflict_key) WHERE status = 'pending';
   `,
 ];
 

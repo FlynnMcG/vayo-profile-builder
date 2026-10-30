@@ -9,15 +9,15 @@ import {
   type ToolSet,
 } from "ai";
 import type { ChatMessage, ChatRequest } from "@/lib/chat/schema";
-import { emptyProfile, type TravelProfile } from "@/lib/profile/schema";
+import type { ProfileConflict } from "@/lib/conflicts/schema";
+import type { TravelProfile } from "@/lib/profile/schema";
 import { CHAT_REASONING, chatConfig, getChatModel } from "@/server/ai/config";
 import { CHAT_SYSTEM_PROMPT, formatUserTurn } from "@/server/ai/prompts";
+import { createConflictTools } from "@/server/ai/tools/conflict-tools";
 import { createDestinationTools } from "@/server/ai/tools/destination-tools";
 import { createProfileTools } from "@/server/ai/tools/profile-tools";
-import { getDatabase } from "@/server/db/database";
-import { createDestinationStore, type DestinationStore } from "@/server/destinations/destination-store";
-import { createProfileStore, type ProfileStore } from "@/server/profile/profile-store";
-import { createChatHistoryStore, type ChatHistoryStore } from "./history-store";
+import type { TurnContext } from "@/server/conflicts/conflict-service";
+import { getServices, type Services } from "@/server/services";
 
 // Caps tool-call round trips per turn so a confused model can't loop forever.
 const MAX_STEPS = 5;
@@ -31,53 +31,52 @@ export class MessageAlreadyAnsweredError extends Error {
   }
 }
 
-export interface ChatServiceDeps {
-  historyStore: ChatHistoryStore;
-  profileStore: ProfileStore;
-  destinationStore: DestinationStore;
-}
+// Tests and evals pass their own (e.g. in-memory) services.
+export type ChatServiceDeps = Services;
 
-// Production wiring; tests and evals pass their own (e.g. in-memory) deps.
-export function getDefaultChatServiceDeps(): ChatServiceDeps {
-  const db = getDatabase();
+// Tools are built per turn so conflict rules know which turn they're in.
+export function createChatTools({ destinationStore, conflictService }: ChatServiceDeps, turn: TurnContext) {
   return {
-    historyStore: createChatHistoryStore(db),
-    profileStore: createProfileStore(db),
-    destinationStore: createDestinationStore(db),
-  };
-}
-
-export function createChatTools({ profileStore, destinationStore }: ChatServiceDeps) {
-  return {
-    ...createProfileTools(profileStore),
+    ...createProfileTools(conflictService, turn),
+    ...createConflictTools(conflictService, turn),
     ...createDestinationTools(destinationStore),
   };
 }
 
 // Stored history is plain text; only the newest user message gets the
-// current profile prepended, so earlier turns don't carry stale snapshots.
-export function buildModelMessages(history: ChatMessage[], profile: TravelProfile): ModelMessage[] {
+// current profile and pending conflicts prepended, so earlier turns don't
+// carry stale snapshots.
+export function buildModelMessages(
+  history: ChatMessage[],
+  profile: TravelProfile,
+  pendingConflicts: ProfileConflict[] = [],
+): ModelMessage[] {
   return history.map(({ role, content }, index) =>
     index === history.length - 1 && role === "user"
-      ? { role, content: formatUserTurn(profile, content) }
+      ? { role, content: formatUserTurn(profile, pendingConflicts, content) }
       : { role, content },
   );
 }
 
-// Joins the text from every step; `text` alone is only the final step's.
-function getReplyText({ content }: StreamTextEndEvent<ToolSet>): string {
-  return content
-    .flatMap((part) => (part.type === "text" && part.text.trim() ? [part.text.trim()] : []))
-    .join("\n\n");
+// The reply is the text after the last tool call (the same rule as the
+// client's getMessageText): pre-tool text is the model thinking out loud.
+// Falls back to all text if nothing follows the tools.
+export function getReplyText({ content }: Pick<StreamTextEndEvent<ToolSet>, "content">): string {
+  const texts = (parts: typeof content) =>
+    parts.flatMap((part) => (part.type === "text" && part.text.trim() ? [part.text.trim()] : []));
+
+  const lastTool = content.findLastIndex((part) => part.type === "tool-call" || part.type === "tool-result");
+  const reply = texts(content.slice(lastTool + 1));
+  return (reply.length ? reply : texts(content)).join("\n\n");
 }
 
 // Records the user's message, streams the assistant's reply from the
 // server-held history, and stores the reply once it completes.
 export async function streamChatReply(
   { chatId, message }: ChatRequest,
-  deps: ChatServiceDeps = getDefaultChatServiceDeps(),
+  deps: ChatServiceDeps = getServices(),
 ) {
-  const { historyStore, profileStore } = deps;
+  const { historyStore, conflictService } = deps;
   await historyStore.appendMessage(chatId, message);
   const history = await historyStore.getMessages(chatId);
   if (history.at(-1)?.id !== message.id) throw new MessageAlreadyAnsweredError(message.id);
@@ -88,8 +87,8 @@ export async function streamChatReply(
   const result = streamText({
     model: getChatModel(),
     system: CHAT_SYSTEM_PROMPT,
-    messages: buildModelMessages(history, profileStore.get() ?? emptyProfile),
-    tools: createChatTools(deps),
+    messages: buildModelMessages(history, conflictService.getProfile(), conflictService.listPending()),
+    tools: createChatTools(deps, { chatId, userMessageId: message.id }),
     stopWhen: isStepCount(MAX_STEPS),
     reasoning: CHAT_REASONING,
     maxOutputTokens: chatConfig.maxOutputTokens,

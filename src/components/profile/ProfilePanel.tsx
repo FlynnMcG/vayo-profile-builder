@@ -1,14 +1,35 @@
+import type { ConflictSummary } from "@/lib/conflicts/display";
 import type { ProfileDisplayRow } from "@/lib/profile/display";
 import type { ProfileField } from "@/lib/profile/schema";
 
 interface ProfilePanelProps {
   // null while the profile is loading.
   rows: ProfileDisplayRow[] | null;
+  conflictsByField?: Partial<Record<ProfileField, ConflictSummary[]>>;
   highlighted?: ProfileField[];
   error?: string | null;
 }
 
-export function ProfilePanel({ rows, highlighted = [], error = null }: ProfilePanelProps) {
+function ConflictNotice({ conflict }: { conflict: ConflictSummary }) {
+  return (
+    <div
+      role="status"
+      data-conflict-id={conflict.id}
+      className="mt-2 rounded-md border border-orange-300 bg-orange-50 px-2.5 py-2 text-xs text-orange-900 dark:border-orange-800 dark:bg-orange-950/60 dark:text-orange-200"
+    >
+      <p className="font-semibold">Needs your confirmation</p>
+      <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
+        <dt className="text-orange-700 dark:text-orange-400">Saved</dt>
+        <dd>{conflict.saved}</dd>
+        <dt className="text-orange-700 dark:text-orange-400">New</dt>
+        <dd>{conflict.proposed}</dd>
+      </dl>
+      {conflict.reason && <p className="mt-1 italic">{conflict.reason}</p>}
+    </div>
+  );
+}
+
+export function ProfilePanel({ rows, conflictsByField = {}, highlighted = [], error = null }: ProfilePanelProps) {
   return (
     <aside
       aria-label="Travel profile"
@@ -32,6 +53,7 @@ export function ProfilePanel({ rows, highlighted = [], error = null }: ProfilePa
               key={row.field}
               data-field={row.field}
               data-updated={highlighted.includes(row.field) || undefined}
+              data-has-conflict={conflictsByField[row.field] ? true : undefined}
               className="rounded-lg px-2 py-2 transition-colors duration-700 data-updated:bg-amber-100 dark:data-updated:bg-amber-900/40"
             >
               <dt className="text-xs font-medium uppercase tracking-wide text-zinc-500">
@@ -52,6 +74,9 @@ export function ProfilePanel({ rows, highlighted = [], error = null }: ProfilePa
                     ))}
                   </ul>
                 )}
+                {conflictsByField[row.field]?.map((conflict) => (
+                  <ConflictNotice key={conflict.id} conflict={conflict} />
+                ))}
               </dd>
             </div>
           ))}

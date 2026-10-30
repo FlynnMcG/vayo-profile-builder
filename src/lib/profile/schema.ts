@@ -33,9 +33,10 @@ const uniqueBy = <T>(key: (value: T) => string) => (values: T[]) =>
 
 const caseInsensitive = (value: string) => value.toLowerCase();
 
-// A document is identified by its name and number together.
-export const documentKey = (doc: Pick<TravelDocument, "documentName" | "documentNumber">) =>
-  `${doc.documentName.toLowerCase()}|${doc.documentNumber.toLowerCase()}`;
+// One document per name (one passport, one Global Entry, ...), so the name
+// identifies it.
+export const documentKey = (doc: Pick<TravelDocument, "documentName">) =>
+  doc.documentName.trim().toLowerCase();
 
 const uniqueStrings = (label: string) =>
   z.array(ProfileStringSchema).refine(uniqueBy(caseInsensitive), `${label} must be unique`);
@@ -58,10 +59,10 @@ export const TravelProfileSchema = z.object({
   wishlist: uniqueStrings("Wishlist"),
   travelDocuments: z
     .array(TravelDocumentSchema)
-    .refine(uniqueBy(documentKey), "Travel documents must be unique"),
+    .refine(uniqueBy(documentKey), "Only one travel document per name"),
 });
 
-// Field-level replacement, used by the REST API.
+// Field-level replacement, used by the profile store.
 export const ProfileUpdateSchema = TravelProfileSchema.partial().strict();
 
 export type TravelProfile = z.infer<typeof TravelProfileSchema>;

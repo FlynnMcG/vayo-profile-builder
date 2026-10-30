@@ -1,6 +1,6 @@
 import type { BudgetTier } from "@/lib/destinations/schema";
 import { maskDocumentNumber } from "./redact";
-import type { Companion, ProfileField, TravelDocument, TravelProfile } from "./schema";
+import { emptyProfile, type Companion, type ProfileField, type TravelDocument, type TravelProfile } from "./schema";
 
 export interface ProfileDisplayRow {
   field: ProfileField;
@@ -46,7 +46,7 @@ const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD",
 const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 
 // Numbers are masked here too, in case an unredacted profile is displayed.
-const formatDocument = ({ documentName, documentNumber, nameOnDocument }: TravelDocument) =>
+export const formatDocument = ({ documentName, documentNumber, nameOnDocument }: TravelDocument) =>
   `${documentName} ${maskDocumentNumber(documentNumber)} · ${nameOnDocument}`;
 
 function toValues(profile: TravelProfile, field: ProfileField): string[] {
@@ -74,6 +74,13 @@ function toValues(profile: TravelProfile, field: ProfileField): string[] {
       return profile.travelDocuments.map(formatDocument);
   }
 }
+
+// Formats one field's value, e.g. for showing both sides of a conflict.
+export function formatFieldValue<F extends ProfileField>(field: F, value: TravelProfile[F]): string[] {
+  return toValues({ ...emptyProfile, [field]: value }, field);
+}
+
+export const fieldLabel = (field: ProfileField) => FIELD_LABELS[field];
 
 // Converts a profile into ordered, presentation-ready rows so UI components
 // stay free of formatting logic.

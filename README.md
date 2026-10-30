@@ -2,7 +2,7 @@
 
 A travel profile builder powered by a provider-configurable chat assistant. As you chat, the assistant builds a profile of your travel preferences, shown in a side panel.
 
-> **Status:** Chat streams from the model via the Vercel AI SDK. The assistant updates a saved travel profile from the conversation and can look up and browse destinations with tools. The profile, chat history, and destinations are stored in SQLite. Conflict detection is next.
+> **Status:** Chat streams from the model via the Vercel AI SDK. The assistant updates a saved travel profile from the conversation and can look up and browse destinations with tools. Overwrites of saved values become pending conflicts that the user confirms in chat. The profile, conflicts, chat history, and destinations are stored in SQLite.
 
 ## Stack
 
@@ -40,7 +40,7 @@ A travel profile builder powered by a provider-configurable chat assistant. As y
 
 4. Open [http://localhost:3000](http://localhost:3000).
 
-The SQLite database is created at `data/vayo.db` on first request and seeded with 10 destinations. To start fresh, delete the `data/` folder (restart the dev server afterwards). To clear just the profile, send `DELETE /api/profile`.
+The SQLite database is created at `data/vayo.db` on first request and seeded with 10 destinations. To start fresh, delete the `data/` folder (restart the dev server afterwards). To clear just the profile and its pending conflicts, send `DELETE /api/profile`.
 
 ### Environment variables
 
@@ -99,12 +99,45 @@ There's one profile (multiple profiles are out of scope). The core fields mirror
 | `preferredClimates` | `hot \| warm \| mild \| cool \| cold`               |                         |
 | `travelDocuments`   | `{ documentName, documentNumber, nameOnDocument }[]` |                      |
 
-**Travel document numbers** are stored in full in the local database but masked to the last 4 characters (`••••5678`) everywhere they leave the server: the profile context sent to the model, the `updateProfile` tool result, `/api/profile` responses, and the panel. To remove a document, the model gives its name, plus the last 4 characters if several documents share that name.
+**Travel document numbers** are stored in full in the local database but masked to the last 4 characters (`••••5678`) everywhere they leave the server: the profile context sent to the model, the `updateProfile` tool result, `/api/profile` responses, and the panel. There's one document per name (one passport, one Global Entry), so documents are identified and removed by name.
 
-- **Store** (`src/server/profile/profile-store.ts`): `get`, `create`, `update` (replaces the given fields, creating the profile if needed), `delete`.
-- **API** (`/api/profile`): `GET` returns the profile, `PATCH` updates fields (Zod-validated, `400` on bad input), and `DELETE` resets it.
+- **Store** (`src/server/profile/profile-store.ts`): `get`, `create`, `update` (replaces the given fields, creating the profile if needed), `delete`. Only the conflict service writes through it.
+- **API** (`/api/profile`): `GET` returns the profile. It's read-only over HTTP, since users change it only through the chat; `DELETE` is a development reset.
 - **Model tool** (`updateProfile`): takes a list of changes, where single-value fields are `set` and list fields (including `travelDocuments`) use `add`/`remove`. It's applied by the pure `applyProfileChanges` (`src/lib/profile/changes.ts`). Each turn, the current profile is prepended to the newest user message; the system prompt stays static.
-- **UI:** the panel loads from `GET /api/profile`, refreshes after every chat turn, and briefly highlights the fields that changed.
+- **UI:** the panel loads from `GET /api/profile` and `GET /api/conflicts`, refreshes after every chat turn, briefly highlights the fields that changed, and shows pending conflicts on their field.
+
+## Profile conflicts
+
+Every profile write goes through the conflict service (`src/server/conflicts/conflict-service.ts`), so the rules can't be bypassed.
+
+**Automatic detection** (`src/lib/conflicts/detect.ts`, pure):
+
+- Setting a single-value field that already has a *different* value (including clearing it) is held back as a pending conflict instead of being applied.
+- Changing a saved travel document's number or name-on-document is a conflict on that document.
+- Writing to an empty field, and no-op writes (same value after normalizing case), never conflict.
+- List adds and removes never conflict automatically. The assistant raises list conflicts itself with `reportConflict` (e.g. adding Tokyo to the wishlist when Japan is in `avoid`).
+
+**Rules:**
+
+- **Partial apply:** in one `updateProfile` call, clean changes apply and only the conflicting ones are held.
+- **One pending conflict per key** (the field, or the document name). An identical conflict is reused (deduped); a different one on the same key supersedes the old one.
+- **`userConfirmed`:** a per-change flag the model may set only when the user's current message explicitly replaces the saved value. The overwrite applies immediately and is recorded as `resolved` / `user_confirmed` for audit.
+- **Same-turn lock:** a turn is identified by the user's message id. A conflict can't be resolved, and its field can't be changed (even with `userConfirmed`), in the turn that raised it.
+- **Resolution:** `keep_existing`, `accept_proposed`, or `custom` (a different change to the same field).
+- **Stale check:** if an overwrite conflict's field changed after it was raised, resolving it marks it `superseded` instead.
+- Held changes are validated up front, so accepting a conflict can't fail later.
+
+**Tools:** `updateProfile` (returns `applied`, `conflicts`, and `rejected`), `reportConflict` (list fields only), and `resolveConflict`. Pending conflicts are included in the newest user message each turn, next to the profile.
+
+**API:**
+
+| Endpoint                              | Description                                                              |
+| ------------------------------------- | ------------------------------------------------------------------------ |
+| `GET /api/conflicts`                  | Pending conflicts (document numbers masked)                              |
+| `POST /api/conflicts`                 | Report a conflict: `{ change, reason }` → `201`                          |
+| `POST /api/conflicts/[id]/resolve`    | `{ resolution }` → `200`; `404` unknown, `409` not pending/stale, `400` invalid |
+
+Conflict rows are kept after they're resolved or superseded (status, resolution, raising/resolving message, timestamps) as an audit trail.
 
 ## Scripts
 
@@ -123,7 +156,8 @@ There's one profile (multiple profiles are out of scope). The core fields mirror
 src/
   app/
     api/chat/route.ts     POST /api/chat: validates the request, streams the reply
-    api/profile/route.ts  GET/PATCH/DELETE /api/profile
+    api/profile/route.ts  GET/DELETE /api/profile (read-only over HTTP)
+    api/conflicts/        GET/POST /api/conflicts, POST /api/conflicts/[id]/resolve
     ...                Page, layout, global styles
   components/
     ProfileBuilder.tsx Connects chat to the profile panel (refresh after each turn)
@@ -133,15 +167,18 @@ src/
     useChatSession.ts  Wraps the AI SDK's useChat; sends only the newest message
     useProfile.ts      Loads the profile and tracks changed fields
   lib/                 Shared by client and server
+    conflicts/         Overwrite detection, conflict schemas, display summaries
     chat/              Zod chat schemas and UIMessage adapters
     destinations/      Zod DestinationInfo schema
     profile/           Zod profile schema, change ops, display mapping
   server/              Server-only code (guarded by `server-only`)
     ai/                Provider registry, model config, system prompt, tools/
     chat/              Chat service and SQLite chat history store
+    conflicts/         Conflict service (all profile writes) and conflict store
     db/                SQLite connection and migrations
     destinations/      Destination store and seed data
     profile/           Profile store
+    services.ts        Wires stores and services onto a database
 test/
   helpers/             In-memory chat service deps (for tests and evals)
   stubs/               Test stand-ins (e.g. `server-only`)
@@ -153,6 +190,9 @@ docs/
 
 1. The client sends only the newest message: `{ chatId, message: { id, role, content } }`.
 2. The route validates the request with Zod and calls the chat service.
-3. The service appends the message to the server-held history, prepends the current profile to the newest user message, and streams the model's reply, allowing up to 5 tool-call steps. When the reply finishes, it stores the text from all steps, even if the client disconnects.
+3. The service appends the message to the server-held history, prepends the current profile and pending conflicts to the newest user message, and streams the model's reply, allowing up to 5 tool-call steps. When the reply finishes, it's stored even if the client disconnects.
 4. Retrying a message that already has a reply returns `409` instead of calling the model again.
-5. When the turn finishes, the client re-fetches `/api/profile` and highlights changed fields.
+5. Profile tools run through the conflict service with the turn's user message id, so same-turn rules apply.
+6. When the turn finishes, the client re-fetches the profile and pending conflicts, and highlights what changed.
+
+Only the text after the turn's last tool call is shown and stored as the reply. With reasoning off, the model tends to "think out loud" before calling tools.

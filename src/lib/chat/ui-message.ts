@@ -17,6 +17,12 @@ export interface ChatMessageView extends ChatMessage {
 
 type ToolPart = Extract<UIMessage["parts"][number], { toolCallId: string }>;
 
+// Whether an updateProfile result held back any changes as conflicts.
+const hasConflicts = (part: ToolPart) =>
+  part.state === "output-available" &&
+  Array.isArray((part.output as { conflicts?: unknown } | undefined)?.conflicts) &&
+  ((part.output as { conflicts: unknown[] }).conflicts.length > 0);
+
 function describeToolCall(part: ToolPart): ToolActivity {
   const toolName = getToolName(part);
   const input = (part.input ?? {}) as { name?: string };
@@ -27,8 +33,14 @@ function describeToolCall(part: ToolPart): ToolActivity {
       : toolName === "listDestinations"
         ? "Browsed destinations"
         : toolName === "updateProfile"
-          ? "Updated profile"
-          : `Used ${toolName}`;
+          ? hasConflicts(part)
+            ? "Found a conflict"
+            : "Updated profile"
+          : toolName === "reportConflict"
+            ? "Flagged a conflict"
+            : toolName === "resolveConflict"
+              ? "Resolved conflict"
+              : `Used ${toolName}`;
 
   const status =
     part.state === "output-available"
@@ -40,12 +52,17 @@ function describeToolCall(part: ToolPart): ToolActivity {
   return { id: part.toolCallId, label, status };
 }
 
-// Text from separate steps (e.g. before and after a tool call) arrives as
-// separate parts; join them as paragraphs, matching what the server stores.
+// The reply is the text after the last tool call. With reasoning off, models
+// often "think out loud" before calling tools; that preamble isn't meant for
+// the user. Falls back to all text if nothing follows the tools. Matches what
+// the server stores.
 export function getMessageText(message: UIMessage): string {
-  return message.parts
-    .flatMap((part) => (part.type === "text" && part.text.trim() ? [part.text.trim()] : []))
-    .join("\n\n");
+  const texts = (parts: UIMessage["parts"]) =>
+    parts.flatMap((part) => (part.type === "text" && part.text.trim() ? [part.text.trim()] : []));
+
+  const lastTool = message.parts.findLastIndex(isToolUIPart);
+  const reply = texts(message.parts.slice(lastTool + 1));
+  return (reply.length ? reply : texts(message.parts)).join("\n\n");
 }
 
 export function toChatMessageView(message: UIMessage): ChatMessageView | null {

@@ -1,17 +1,10 @@
-import type { ChatServiceDeps } from "@/server/chat/chat-service";
-import { createChatHistoryStore } from "@/server/chat/history-store";
-import { openSeededDatabase, type Database } from "@/server/db/database";
-import { createDestinationStore } from "@/server/destinations/destination-store";
+import { openSeededDatabase } from "@/server/db/database";
 import { createProfileStore } from "@/server/profile/profile-store";
+import { createServices } from "@/server/services";
 
-// Chat service dependencies backed by a fresh, seeded in-memory database.
-// Shared by unit tests and (later) evals.
-export function createInMemoryDeps(): ChatServiceDeps & { db: Database } {
+// App services backed by a fresh, seeded in-memory database, plus direct
+// store access for arranging test state. Shared by unit tests and (later) evals.
+export function createInMemoryDeps() {
   const db = openSeededDatabase();
-  return {
-    db,
-    historyStore: createChatHistoryStore(db),
-    profileStore: createProfileStore(db),
-    destinationStore: createDestinationStore(db),
-  };
+  return { ...createServices(db), db, profileStore: createProfileStore(db) };
 }

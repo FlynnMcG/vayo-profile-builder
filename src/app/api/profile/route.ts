@@ -1,30 +1,20 @@
 import { connection } from "next/server";
-import { z } from "zod";
 import { redactProfile } from "@/lib/profile/redact";
-import { emptyProfile, ProfileUpdateSchema } from "@/lib/profile/schema";
-import { getDatabase } from "@/server/db/database";
-import { createProfileStore } from "@/server/profile/profile-store";
+import { emptyProfile } from "@/lib/profile/schema";
+import { getServices } from "@/server/services";
 
-// Responses mask travel document numbers; the UI only displays them.
-const getProfileStore = () => createProfileStore(getDatabase());
+// The profile is read-only over HTTP: users change it through the chat, so
+// every write goes through conflict detection. Responses mask document numbers.
 
 export async function GET() {
   // node:sqlite is synchronous, so without this Next would run the query
   // during prerendering and serve a stale profile.
   await connection();
-  return Response.json({ profile: redactProfile(getProfileStore().get() ?? emptyProfile) });
+  return Response.json({ profile: redactProfile(getServices().conflictService.getProfile()) });
 }
 
-export async function PATCH(req: Request) {
-  const body: unknown = await req.json().catch(() => null);
-  const parsed = ProfileUpdateSchema.safeParse(body);
-  if (!parsed.success) {
-    return Response.json({ error: z.prettifyError(parsed.error) }, { status: 400 });
-  }
-  return Response.json({ profile: redactProfile(getProfileStore().update(parsed.data)) });
-}
-
+// Development reset: clears the profile and any pending conflicts.
 export async function DELETE() {
-  getProfileStore().delete();
+  getServices().conflictService.resetProfile();
   return Response.json({ profile: emptyProfile });
 }

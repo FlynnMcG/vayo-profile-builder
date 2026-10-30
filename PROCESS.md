@@ -210,3 +210,59 @@ Running transcript of prompts and abbreviated responses/actions. Notable decisio
 - Document numbers are masked (`••••5678`) in the model context, tool results, API, and UI. Full numbers stay in SQLite.
 - Prompt lists the new fields. Display labels/formatting for each.
 - 109 tests. Live: one message set all six non-document fields; a second saved two documents, and the reply/panel showed only the last 4. Screenshots 07–08.
+
+**Prompt:**
+> (commit message approved: `feat: Basic travel profile management with SQLite storage, API, and chat updates`)
+
+**Response/actions:**
+- Committed `8a582b1` (not pushed; `ae9c09b` also unpushed).
+
+---
+
+## 14. Conflict detection design review
+
+**Prompt:**
+> Lets talk now lets talk conflict detection and resolution. This is going to be it's own tool call/api and it's own service. There are going to be two levels of conflict detection, an automatic detection at the server level that triggers when a value is going to be overwritten in a profile and returns a conflict to the bot. And judgement based calls on information that contradicts but doesn't directly overwrite (vegetarians going to steakhouses from the example). We are worried about the first one for now.
+>
+> We want conflicts(overwrites) to be detected in the conflict service. There should be a pending conflict table, and an api to report and resolve conflicts. If a conflict is detected it should create a pending conflict and display in the UI that there's a conflict in that field on the profile UI and the bot should ask the user to clarify which answer is correct. If the bot is sure when it updates a profile field it should be able to set a flag that skips conflict resolution. When a pending conflict is confirmed there should be follow up conflict resolve call that updates the profile and marks the pending conflict as resolved. If a conflict is raised(no flag sent, change) don't let the agent resolve it in the same turn until the user replies. A new conflict replaces the only one if it's for the same field. Dedupe identical conflicts. Make sure that writing to an empty field doesn't create a conflict.
+>
+> This is an important component so let me know if you see gaps or flaws or are confused on any of this.
+
+**Response/actions:**
+- Reviewed the design before building. Raised gaps with a recommendation for each (see the reply and DECISIONS.md once settled). No code yet.
+
+**Prompt:**
+> 1. Lists can have a conflict but we'll leave that as something initiated by the bot for the purpose of this demo. It can be for additions or removals(think I hate Japan and I love Toyko in different turns).
+> 2. Yeah treat that as a conflict. One document of each name(Passport etc).
+> 3. Yes that's the idea, make it explicit.
+> 4. Yep reasonable.
+> 5. Reasonable.
+> 6. Yes.
+> 7. Yes
+> 8. The fields are read only for the user, they can only edit it via the chat. They don't have api access.
+> 9. Correct.
+> 10. Lets leave that for now, I want to be focused.
+>
+> Yes on the meaning with the post endpoint. Think POST /api/conflicts/[id]/resolve + transcript note
+
+**Response/actions:**
+- Settled design: scalar overwrites and same-name document changes are auto-detected. List conflicts are bot-initiated via `reportConflict` (adds or removes). Per-change `userConfirmed` flag, only for explicit replacements, logged as an audit row. Turn = user message ID; no resolving or confirmed-overwriting a key whose conflict was raised this turn. Resolution: keep_existing / accept_proposed / custom change. Partial apply. Dedupe/replace per conflict key. Writes to empty fields never conflict.
+- Profile is read-only outside chat, so `PATCH /api/profile` is removed (it would bypass detection). API: `GET/POST /api/conflicts`, `POST /api/conflicts/[id]/resolve`. No UI resolve buttons.
+
+---
+
+## 15. Conflict detection build
+
+**Response/actions (continuing 14):**
+- Documents are one per name; `userConfirmed` is a per-change flag. Pure `detectOverwrites` handles scalars and documents; lists are never auto-detected.
+- Migration 4: `profile_conflicts` with a partial unique index (one pending per key) and an audit trail. `ConflictStore` + `ConflictService` own all profile writes in transactions: partial apply, dedupe/replace, same-turn lock, confirmed-overwrite audit, keep/accept/custom resolution, stale check, up-front validation.
+- Tools: `updateProfile` → service, `reportConflict` (lists only), `resolveConflict`, all bound to the turn's user message id, outputs redacted. Pending conflicts go in the per-turn context.
+- API: `GET/POST /api/conflicts`, `POST /api/conflicts/[id]/resolve` (`RouteContext`, per the Next 16 docs). `PATCH /api/profile` removed. Panel shows "Needs your confirmation" on the field.
+- 158 tests. A test found invalid overwrites being stored as conflicts; fixed.
+- Live testing found the model asking without tools, misusing `reportConflict`, and narrating before tools. Fixed with a list-only schema, prompt examples, and showing/storing only post-tool text. The user's own in-app testing (OAK/SFO back-and-forth) also behaved correctly. Screenshots 09–11.
+
+**Prompt:**
+> Commit and push
+
+**Response/actions:**
+- Committed `feat: add profile conflict detection and resolution` and pushed it with the two earlier unpushed commits.

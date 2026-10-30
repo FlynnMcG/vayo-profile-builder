@@ -19,8 +19,25 @@ const assistantWithTool: UIMessage = {
 };
 
 describe("getMessageText", () => {
-  it("joins text from separate steps as paragraphs", () => {
-    expect(getMessageText(assistantWithTool)).toBe("Let me check.\n\nTokyo is best in spring.");
+  it("keeps only the reply after the last tool call", () => {
+    expect(getMessageText(assistantWithTool)).toBe("Tokyo is best in spring.");
+  });
+
+  it("joins multiple text parts after the tools as paragraphs", () => {
+    const message: UIMessage = {
+      ...assistantWithTool,
+      parts: [...assistantWithTool.parts, { type: "text", text: "Want details?" }],
+    };
+    expect(getMessageText(message)).toBe("Tokyo is best in spring.\n\nWant details?");
+  });
+
+  it("falls back to all text when nothing follows the tools", () => {
+    const message: UIMessage = { ...assistantWithTool, parts: assistantWithTool.parts.slice(0, 2) };
+    expect(getMessageText(message)).toBe("Let me check.");
+  });
+
+  it("returns plain text messages unchanged", () => {
+    expect(getMessageText({ id: "a", role: "assistant", parts: [{ type: "text", text: "Hi" }] })).toBe("Hi");
   });
 });
 

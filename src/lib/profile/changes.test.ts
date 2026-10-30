@@ -102,22 +102,28 @@ describe("applyProfileChanges: expanded fields", () => {
 
 describe("applyProfileChanges: travel documents", () => {
   const passport = { documentName: "Passport", documentNumber: "X12345678", nameOnDocument: "Sam Lee" };
-  const irishPassport = { documentName: "Passport", documentNumber: "P99990000", nameOnDocument: "Sam Lee" };
   const globalEntry = { documentName: "Global Entry", documentNumber: "GE1111", nameOnDocument: "Sam Lee" };
 
-  it("adds multiple documents, including two with the same name", () => {
+  it("adds multiple documents", () => {
     const next = applyProfileChanges(emptyProfile, [
-      { field: "travelDocuments", op: "add", documents: [passport, irishPassport, globalEntry] },
+      { field: "travelDocuments", op: "add", documents: [passport, globalEntry] },
     ]);
-    expect(next.travelDocuments).toEqual([passport, irishPassport, globalEntry]);
+    expect(next.travelDocuments).toEqual([passport, globalEntry]);
   });
 
-  it("ignores a document that's already saved", () => {
-    const profile = { ...emptyProfile, travelDocuments: [passport] };
-    const next = applyProfileChanges(profile, [
-      { field: "travelDocuments", op: "add", documents: [{ ...passport, documentName: "passport" }] },
-    ]);
-    expect(next.travelDocuments).toEqual([passport]);
+  it("replaces a saved document with the same name (one per name)", () => {
+    const profile = { ...emptyProfile, travelDocuments: [passport, globalEntry] };
+    const renewed = { ...passport, documentName: "passport", documentNumber: "Y87654321" };
+    const next = applyProfileChanges(profile, [{ field: "travelDocuments", op: "add", documents: [renewed] }]);
+    expect(next.travelDocuments).toEqual([globalEntry, renewed]);
+  });
+
+  it("rejects two documents with the same name in one change", () => {
+    expect(() =>
+      applyProfileChanges(emptyProfile, [
+        { field: "travelDocuments", op: "add", documents: [passport, { ...passport, documentNumber: "Z1" }] },
+      ]),
+    ).toThrow();
   });
 
   it("requires a number and name on document to add", () => {
@@ -128,18 +134,10 @@ describe("applyProfileChanges: travel documents", () => {
     ).toThrow();
   });
 
-  it("removes by name and last 4 digits when names collide", () => {
-    const profile = { ...emptyProfile, travelDocuments: [passport, irishPassport, globalEntry] };
+  it("removes by name, case-insensitively", () => {
+    const profile = { ...emptyProfile, travelDocuments: [passport, globalEntry] };
     const next = applyProfileChanges(profile, [
-      { field: "travelDocuments", op: "remove", documents: [{ documentName: "passport", documentNumber: "0000" }] },
-    ]);
-    expect(next.travelDocuments).toEqual([passport, globalEntry]);
-  });
-
-  it("removes every document with a name when no number is given", () => {
-    const profile = { ...emptyProfile, travelDocuments: [passport, irishPassport, globalEntry] };
-    const next = applyProfileChanges(profile, [
-      { field: "travelDocuments", op: "remove", documents: [{ documentName: "Passport" }] },
+      { field: "travelDocuments", op: "remove", documents: [{ documentName: "PASSPORT" }] },
     ]);
     expect(next.travelDocuments).toEqual([globalEntry]);
   });

@@ -5,6 +5,7 @@ import {
   CompanionSchema,
   documentKey,
   TravelProfileSchema,
+  type ProfileField,
   type TravelDocument,
   type TravelProfile,
 } from "./schema";
@@ -15,33 +16,36 @@ import {
 const ListOpSchema = z.enum(["add", "remove"]);
 const ChangeStringSchema = z.string().min(1).max(100);
 
-const listChange = <F extends string, V extends z.ZodType>(field: F, value: V) =>
-  z.object({ field: z.literal(field), op: ListOpSchema, values: z.array(value).min(1) });
+// Lets the model skip conflict detection for an overwrite, only when the
+// user's current message explicitly replaces the existing value.
+const UserConfirmedSchema = z
+  .boolean()
+  .optional()
+  .describe(
+    "Set true only if the user's current message explicitly replaces the existing value (e.g. 'actually, change my budget to luxury'). Skips conflict detection.",
+  );
 
-// For "add", all three fields are required. For "remove", documents match by
-// name, plus documentNumber when given (matched as a suffix, since the model
-// only sees the last 4 digits).
+const scalarChange = <F extends ProfileField, V extends z.ZodType>(field: F, value: V) =>
+  z.object({ field: z.literal(field), value, userConfirmed: UserConfirmedSchema });
+
+const listChange = <F extends ProfileField, V extends z.ZodType>(field: F, value: V) =>
+  z.object({
+    field: z.literal(field),
+    op: ListOpSchema,
+    values: z.array(value).min(1),
+    userConfirmed: UserConfirmedSchema,
+  });
+
+// For "add", all three fields are required; adding a document whose name is
+// already saved replaces it (one document per name). For "remove", only the
+// name is needed.
 const DocumentChangeItemSchema = z.object({
-  documentName: ChangeStringSchema,
+  documentName: ChangeStringSchema.describe('e.g. "Passport", "Global Entry"'),
   documentNumber: z.string().min(1).max(50).optional(),
   nameOnDocument: ChangeStringSchema.optional(),
 });
 
-export const ProfileChangeSchema = z.discriminatedUnion("field", [
-  z.object({ field: z.literal("name"), value: ChangeStringSchema.nullable() }),
-  z.object({
-    field: z.literal("citizenship"),
-    value: z.string().length(2).nullable().describe('ISO 3166-1 alpha-2 code, e.g. "US"'),
-  }),
-  z.object({
-    field: z.literal("homeAirport"),
-    value: z.string().length(3).nullable().describe('IATA code, e.g. "SFO"'),
-  }),
-  z.object({ field: z.literal("budgetTier"), value: BudgetTierSchema.nullable() }),
-  z.object({
-    field: z.literal("totalBudgetUSD"),
-    value: z.number().int().positive().nullable().describe("Whole-trip budget in USD"),
-  }),
+const LIST_CHANGES = [
   listChange("preferredSeasons", SeasonSchema),
   listChange("preferredClimates", ClimateSchema),
   listChange("companions", CompanionSchema),
@@ -49,17 +53,69 @@ export const ProfileChangeSchema = z.discriminatedUnion("field", [
   listChange("idealTripTypes", ChangeStringSchema.describe('e.g. "beach", "city break", "road trip"')),
   listChange("avoid", ChangeStringSchema.describe('Things to avoid, e.g. "crowds", "long flights"')),
   listChange("wishlist", ChangeStringSchema.describe("Destination name")),
+] as const;
+
+export const ProfileChangeSchema = z.discriminatedUnion("field", [
+  scalarChange("name", ChangeStringSchema.nullable()),
+  scalarChange("citizenship", z.string().length(2).nullable().describe('ISO 3166-1 alpha-2 code, e.g. "US"')),
+  scalarChange("homeAirport", z.string().length(3).nullable().describe('IATA code, e.g. "SFO"')),
+  scalarChange("budgetTier", BudgetTierSchema.nullable()),
+  scalarChange(
+    "totalBudgetUSD",
+    z.number().int().positive().nullable().describe("Whole-trip budget in USD"),
+  ),
+  ...LIST_CHANGES,
   z.object({
     field: z.literal("travelDocuments"),
     op: ListOpSchema,
     documents: z.array(DocumentChangeItemSchema).min(1),
+    userConfirmed: UserConfirmedSchema,
   }),
 ]);
 
+// Changes to plain list fields only: the ones automatic detection never
+// checks, so the assistant reports their conflicts itself.
+export const ListProfileChangeSchema = z.discriminatedUnion("field", [...LIST_CHANGES]);
+
 export type ProfileChange = z.infer<typeof ProfileChangeSchema>;
-type DocumentChangeItem = z.infer<typeof DocumentChangeItemSchema>;
+export type ScalarChange = Extract<ProfileChange, { value: unknown }>;
+export type ListChange = Extract<ProfileChange, { values: unknown[] }>;
+export type DocumentChange = Extract<ProfileChange, { field: "travelDocuments" }>;
+export type DocumentChangeItem = z.infer<typeof DocumentChangeItemSchema>;
+
+// The change without its userConfirmed flag, for comparing proposals.
+export function stripUserConfirmed(change: ProfileChange): ProfileChange {
+  const copy = { ...change };
+  delete copy.userConfirmed;
+  return copy;
+}
+
+export const isScalarChange = (change: ProfileChange): change is ScalarChange => "value" in change;
+export const isDocumentChange = (change: ProfileChange): change is DocumentChange =>
+  change.field === "travelDocuments";
 
 const sameItem = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+// Normalizes a scalar change's value the way it will be stored.
+export function normalizeScalar(change: ScalarChange): TravelProfile[ScalarChange["field"]] {
+  if (change.value === null) return null;
+  switch (change.field) {
+    case "name":
+      return change.value.trim();
+    case "citizenship":
+    case "homeAirport":
+      return change.value.trim().toUpperCase();
+    default:
+      return change.value;
+  }
+}
+
+export const toDocument = (item: DocumentChangeItem): TravelDocument => ({
+  documentName: item.documentName.trim(),
+  // Missing number or name fails validation in applyProfileChanges.
+  documentNumber: item.documentNumber?.trim() ?? "",
+  nameOnDocument: item.nameOnDocument?.trim() ?? "",
+});
 
 function applyListOp<T extends string>(current: T[], op: "add" | "remove", values: T[]): T[] {
   if (op === "remove") return current.filter((item) => !values.some((v) => sameItem(item, v)));
@@ -72,53 +128,31 @@ function applyListOp<T extends string>(current: T[], op: "add" | "remove", value
   return next;
 }
 
-const matchesDocument = (doc: TravelDocument, match: DocumentChangeItem) =>
-  sameItem(doc.documentName, match.documentName) &&
-  (!match.documentNumber ||
-    doc.documentNumber.toLowerCase().endsWith(match.documentNumber.trim().toLowerCase()));
-
 function applyDocumentOp(
   current: TravelDocument[],
   op: "add" | "remove",
   items: DocumentChangeItem[],
 ): TravelDocument[] {
-  if (op === "remove") return current.filter((doc) => !items.some((item) => matchesDocument(doc, item)));
-
-  const next = [...current];
-  for (const item of items) {
-    // Missing number or name fails validation in applyProfileChanges.
-    const doc = {
-      documentName: item.documentName.trim(),
-      documentNumber: item.documentNumber?.trim() ?? "",
-      nameOnDocument: item.nameOnDocument?.trim() ?? "",
-    };
-    if (!next.some((existing) => documentKey(existing) === documentKey(doc))) next.push(doc);
-  }
-  return next;
+  const keys = new Set(items.map(documentKey));
+  // Both ops drop any saved document with the same name; "add" then appends
+  // the new version, so adding acts as an upsert by name.
+  const kept = current.filter((doc) => !keys.has(documentKey(doc)));
+  return op === "remove" ? kept : [...kept, ...items.map(toDocument)];
 }
 
 function applyChange(profile: TravelProfile, change: ProfileChange): TravelProfile {
-  switch (change.field) {
-    case "name":
-      return { ...profile, name: change.value?.trim() ?? null };
-    case "citizenship":
-    case "homeAirport":
-      return { ...profile, [change.field]: change.value?.trim().toUpperCase() ?? null };
-    case "budgetTier":
-    case "totalBudgetUSD":
-      return { ...profile, [change.field]: change.value };
-    case "travelDocuments":
-      return { ...profile, travelDocuments: applyDocumentOp(profile.travelDocuments, change.op, change.documents) };
-    default:
-      return {
-        ...profile,
-        [change.field]: applyListOp<string>(profile[change.field], change.op, change.values),
-      };
+  if (isScalarChange(change)) return { ...profile, [change.field]: normalizeScalar(change) };
+  if (isDocumentChange(change)) {
+    return { ...profile, travelDocuments: applyDocumentOp(profile.travelDocuments, change.op, change.documents) };
   }
+  return {
+    ...profile,
+    [change.field]: applyListOp<string>(profile[change.field], change.op, change.values),
+  };
 }
 
-// Applies changes in order and validates the result. Pure, so it's easy to
-// test and is the natural place for conflict detection to hook in.
+// Applies changes in order and validates the result. Pure and unconditional;
+// conflict detection decides which changes reach this.
 export function applyProfileChanges(profile: TravelProfile, changes: ProfileChange[]): TravelProfile {
   return TravelProfileSchema.parse(changes.reduce(applyChange, profile));
 }

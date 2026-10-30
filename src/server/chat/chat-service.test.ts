@@ -41,7 +41,7 @@ describe("buildModelMessages", () => {
       { role: "assistant", content: "Hello!" },
     ]);
     expect(messages[2].content).toBe(
-      `<current_profile>\n${JSON.stringify(profile)}\n</current_profile>\n\nI'm Sam`,
+      `<current_profile>\n${JSON.stringify(profile)}\n</current_profile>\n\n<pending_conflicts>\n[]\n</pending_conflicts>\n\nI'm Sam`,
     );
   });
 
@@ -58,11 +58,27 @@ describe("buildModelMessages", () => {
 });
 
 describe("createChatTools", () => {
-  it("exposes the profile and destination tools", () => {
-    expect(Object.keys(createChatTools(createInMemoryDeps())).sort()).toEqual([
+  it("exposes the profile, conflict, and destination tools", () => {
+    const tools = createChatTools(createInMemoryDeps(), { chatId: "c1", userMessageId: "u1" });
+    expect(Object.keys(tools).sort()).toEqual([
       "getDestinationInfo",
       "listDestinations",
+      "reportConflict",
+      "resolveConflict",
       "updateProfile",
     ]);
+  });
+});
+
+describe("getReplyText", () => {
+  it("stores only the text after the last tool call", async () => {
+    const { getReplyText } = await import("./chat-service");
+    const content = [
+      { type: "text", text: "The user wants X; I should call updateProfile." },
+      { type: "tool-call", toolCallId: "1", toolName: "updateProfile", input: {} },
+      { type: "tool-result", toolCallId: "1", toolName: "updateProfile", input: {}, output: {} },
+      { type: "text", text: "Which should I keep?" },
+    ] as never;
+    expect(getReplyText({ content })).toBe("Which should I keep?");
   });
 });

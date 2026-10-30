@@ -29,3 +29,8 @@ coverage/
 
 # claude local settings
 .claude/settings.local.json
+
+# misc
+*.pem
+.pnp
+.pnp.*

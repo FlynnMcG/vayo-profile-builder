@@ -17,4 +17,7 @@ Simple/common libraries are fine; ask before adding anything significant to the 
 
 ## Rules
 
-<!-- To be filled in -->
+- Consult me before committing to ensure we have sensible commit messages
+- Once we have testing up always verify with npm test before returning to me. 
+- If we are using a particular version of a framework (example: Next 16) make sure you consult the up to date docs rather than rely on memory.
+- Maintain clean code seperation and don't mix the logic into front end focused files. 

@@ -5,12 +5,12 @@ import { ChatInput } from "./ChatInput";
 import { MessageList } from "./MessageList";
 
 interface ChatPanelProps {
-  onTurnFinished?: () => void;
+  onProfileMayHaveChanged?: () => void;
 }
 
-export function ChatPanel({ onTurnFinished }: ChatPanelProps) {
+export function ChatPanel({ onProfileMayHaveChanged }: ChatPanelProps) {
   const { messages, sendMessage, isBusy, isAwaitingReply, error } = useChatSession({
-    onTurnFinished,
+    onProfileMayHaveChanged,
   });
 
   return (

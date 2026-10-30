@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "eval": "vitest run --config vitest.eval.config.mts",
+    "setup": "node scripts/setup.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.93",

@@ -2,8 +2,14 @@
 
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import { useCallback, useMemo } from "react";
-import { toChatMessageView, toChatRequest, type ChatMessageView } from "@/lib/chat/ui-message";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { chatErrorMessage } from "@/lib/chat/errors";
+import {
+  finishedProfileToolCalls,
+  toChatMessageView,
+  toChatRequest,
+  type ChatMessageView,
+} from "@/lib/chat/ui-message";
 
 const WELCOME: ChatMessageView = {
   id: "welcome",
@@ -25,16 +31,27 @@ const hasVisibleContent = (message: ChatMessageView | null): message is ChatMess
   message !== null && (message.content !== "" || message.toolActivity.length > 0);
 
 interface UseChatSessionOptions {
-  // Called after each assistant reply finishes (successfully or not).
-  onTurnFinished?: () => void;
+  // Called when the profile may have changed: as each profile tool result
+  // arrives mid-turn, and again when the reply finishes.
+  onProfileMayHaveChanged?: () => void;
 }
 
 // Owns chat state for the UI; components only depend on this hook's shape.
-export function useChatSession({ onTurnFinished }: UseChatSessionOptions = {}) {
+export function useChatSession({ onProfileMayHaveChanged }: UseChatSessionOptions = {}) {
   const { messages, sendMessage, status, error } = useChat({
     transport,
-    onFinish: () => onTurnFinished?.(),
+    onFinish: () => onProfileMayHaveChanged?.(),
   });
+
+  // Refresh as soon as a profile tool finishes, without waiting for the
+  // rest of the reply to stream.
+  const seenToolCalls = useRef(new Set<string>());
+  useEffect(() => {
+    const fresh = finishedProfileToolCalls(messages).filter((id) => !seenToolCalls.current.has(id));
+    if (fresh.length === 0) return;
+    fresh.forEach((id) => seenToolCalls.current.add(id));
+    onProfileMayHaveChanged?.();
+  }, [messages, onProfileMayHaveChanged]);
 
   const chatMessages = useMemo(
     () => [WELCOME, ...messages.map(toChatMessageView).filter(hasVisibleContent)],
@@ -58,6 +75,6 @@ export function useChatSession({ onTurnFinished }: UseChatSessionOptions = {}) {
     isBusy,
     // Show a typing indicator until the first reply tokens arrive.
     isAwaitingReply: isBusy && lastMessage.role === "user",
-    error: error ? "Something went wrong reaching the assistant. Please try again." : null,
+    error: chatErrorMessage(error),
   };
 }

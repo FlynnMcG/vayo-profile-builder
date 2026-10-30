@@ -266,3 +266,41 @@ Running transcript of prompts and abbreviated responses/actions. Notable decisio
 
 **Response/actions:**
 - Committed `feat: add profile conflict detection and resolution` and pushed it with the two earlier unpushed commits.
+
+---
+
+## 16. Polish round: credentials, logs, live refresh, evals, README
+
+**Prompt:**
+> Ok lets do a final polish round. A few nice to haves and some eval tweaking. Make sure the readme is clear here, especially if someone wants to use a different provider/model. And make a clear error message(that definitely doesn't expose any keys) if there isn't a configured key or an invalid key. (+ assignment text on LLM provider and credentials) Give the readme a general readover... if anything is tedious or difficult make a quick startup script and run it. ... Structured logs for LLM calls and tool calls (model, latency, token counts, request IDs). JSON to stdout is fine. Swap over to allowing the profile to refresh mid turn... Basic eval in vitest... make sure the prompts are versioned and build some scenarios to ensure these behaviors (proactive gap filling, on topic/no outside info, known destinations only, conflict handling incl. contradictions missed by field updates, reasonable end state when the profile is complete). Update the prompt a few times until you get decent results. Cap yourself at a reasonable effort.
+
+**Response/actions:**
+- Credentials: per-request config check (`ChatConfigError` → 503 naming the env var), provider errors mapped to fixed safe messages, client shows the server's message. Verified live: missing key, invalid key (401), bad `CHAT_MODEL`; no key value in any output.
+- JSON logs via AI SDK lifecycle callbacks: `llm.call`, `tool.call`, `chat.turn`, `llm.error`, `chat.config_error`, correlated by `requestId`.
+- Mid-turn refresh: the profile re-fetches when each profile tool result arrives (verified about 1.4s before the turn ended).
+- Evals: `npm run eval` (separate Vitest config, `.env.local` loaded via `@next/env`), 14 scenarios, LLM judge. Prompts v1→v5: 9/12 → 9/12 → 12/13 → 11–12/13 → 13/13 ×2. Added an unseen Berlin scenario against overfitting. One known flaky scenario.
+- `npm run setup` script (tested fresh and existing). README rewritten: quick start, provider/credentials section with a switch-provider walkthrough and error table, evals, logging, API.
+
+---
+
+## 17. Final commit, reflection, and README addition
+
+**Prompt:**
+> (commit message approved: `feat: polish/eval round: credential errors, JSON logs, live profile refresh, evals`) + reflection for the bottom of PROCESS.md + "What I would do with another day" for the bottom of the README.
+
+**Response/actions:**
+- Added the reflection below and the README section as written, then committed and pushed.
+
+---
+
+## Reflection
+
+**Your overall approach:** I spent about 10-15 planning out before diving in with the agent. Mostly overall structure and which specific tooling I wanted to use. My aim was to let the agent have a fair amount of discretion in implementation but to follow my overall approach and structure. Part of that is normal, but I was a little looser than normal to allow for the time constraint.  Normally I would have a more extended review and split the work a little more by functionality.
+
+**What you reviewed by hand vs. trusted:** I reviewed some of the key files as the agent worked, mostly system and schema code. But overall I leaned more on making sure there was reasonable unit testing to not slide between steps and testing in browser as the agent worked to verify. In terms of what I shipped without fully verifying I didn't do any checks for comments/codestyle/etc anything beyond pure functionality. I tried to reasonably test edges but prioritized speed.
+
+**What you'd do differently next time:** I kept the vitest/eval step to the end and in hindsight it could have been slotted in earlier in the flow and it would have given me time to run it longer while the Agent worked and given the Agent some useful context on end goals. The UI isn't polished, that was a deliberate choice but the conflict overlay is a little hideous on my eyes. I also went for fairly big blocks of work, it's organized logically but if I had to roll back a section it would have been painful.
+
+**If this had to run at scale:** This whole schema/database/UI is explicitly single user. At the most basic level it would need to be refined to properly use userIds, make sure that the fields in the travel profile are more typed/uniform to allow things like searching at scale and add auth/login so there's methods to control users wasting tokens or abusing the model access. I probably would actually keep Haiku at scale, or maybe switch to something else cheap from gemini or openAI since anthropic can be a little iffy on user facing speech tasks.
+
+**What you cut/didn't build and why:** Multi user, UI polish, search by field, extended eval tuning, full test coverage, testing multiple providers explicitly, explicitly handling the assistant correcting or changing it's mind, UI for prompting the user to fill out a field or resolve a conflict. I tried to make sure I had time to get the core product out and preemptively cut anything that was both nice to have and a bigger time commitment. I think I probably should have cut a few extras like complex profile options(travel documents) and letting the bot override conflicts in one pass(it felt annoying to have to confirm every time but it added complexity)

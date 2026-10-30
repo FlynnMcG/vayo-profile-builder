@@ -81,3 +81,17 @@ export function toChatRequest(chatId: string, message: UIMessage): ChatRequest {
     message: { id: message.id, role: "user", content: getMessageText(message) },
   };
 }
+
+// Tools whose results change the saved profile or its pending conflicts.
+const PROFILE_TOOLS = new Set(["updateProfile", "reportConflict", "resolveConflict"]);
+
+// IDs of profile tool calls that have finished, so the UI can refresh the
+// profile as soon as each one lands, mid-turn.
+export function finishedProfileToolCalls(messages: UIMessage[]): string[] {
+  return messages.flatMap((message) =>
+    message.parts
+      .filter(isToolUIPart)
+      .filter((part) => PROFILE_TOOLS.has(getToolName(part)) && part.state === "output-available")
+      .map((part) => part.toolCallId),
+  );
+}

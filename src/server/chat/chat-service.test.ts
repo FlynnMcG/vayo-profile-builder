@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { ChatConfigError } from "@/server/ai/config";
 import { emptyProfile } from "@/lib/profile/schema";
 import { SAM } from "../../../test/fixtures/profiles";
 import { createInMemoryDeps } from "../../../test/helpers/in-memory-deps";
@@ -10,7 +11,18 @@ import {
 } from "./chat-service";
 
 describe("streamChatReply", () => {
+  it("fails with a setup error before touching history when no API key is set", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "");
+    const deps = createInMemoryDeps();
+    await expect(
+      streamChatReply({ chatId: "c1", message: { id: "u1", role: "user", content: "Hi" } }, deps),
+    ).rejects.toThrow(ChatConfigError);
+    expect(await deps.historyStore.getMessages("c1")).toEqual([]);
+    vi.unstubAllEnvs();
+  });
+
   it("rejects a retried message that already has a reply, without calling the model", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "test-key-not-real");
     const deps = createInMemoryDeps();
     await deps.historyStore.appendMessage("c1", { id: "u1", role: "user", content: "Hi" });
     await deps.historyStore.appendMessage("c1", { id: "a1", role: "assistant", content: "Hello!" });

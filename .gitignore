@@ -38,3 +38,6 @@ coverage/
 
 # local database
 data/
+
+# eval run output
+evals/results/

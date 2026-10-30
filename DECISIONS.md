@@ -164,3 +164,26 @@ Notable decisions and changes. Each covers: what I was trying to do, what the to
   - (3) Only the text after the last tool call is shown and stored as the reply. This is structural, costs no tokens, and is applied the same way on client and server.
   - (4) Added a "never mention tools/flags/ids" prompt rule.
   - These are behavior risks the upcoming evals should cover: does the model call the tool rather than just asking, does it use `userConfirmed` only for explicit replacements, and does it report list contradictions.
+
+---
+
+### 14. Credentials, logging, and evals (polish round)
+
+- **Credential errors:**
+  - The model config (`CHAT_MODEL`, API key) is checked on every request, so a bad setup gives a clear `503` instead of crashing at startup.
+  - Provider failures are mapped to fixed messages by status (401/403 → key rejected, 404 → model not found, 429 → rate limited). Messages are written by us, never copied from the error, so a key can't leak through.
+  - Tested live with a separate server and overridden env vars: missing key, invalid key, and malformed `CHAT_MODEL`. The test key's value didn't appear in any response or log.
+- **Logging:**
+  - Used the AI SDK's lifecycle callbacks (`onLanguageModelCallEnd`, `onToolExecutionEnd`, `onEnd`) for JSON lines: model, latency, tokens, and provider request id, all correlated by a per-turn `requestId`.
+  - The logs showed about 11.6k input tokens per call, mostly the static prompt and tool schemas. Provider prompt caching is the obvious next step.
+- **Mid-turn refresh:** the client watches the stream for finished profile/conflict tool results and refreshes then, instead of only when the turn ends. Live: the profile updated about 1.4s before the reply finished.
+- **Evals:**
+  - Prompts are versioned (`v1`–`v5`, published versions frozen).
+  - 14 scenarios across the five target behaviors: hard checks (tools, profile, conflicts) plus a Haiku judge with a strict rubric.
+  - Iterated v1 9/12 → v2 9/12 → v3 12/13 → v4 11–12/13 → v5 13/13 (twice).
+  - v2 fixed two failures but regressed on calling `updateProfile` for differing values. v3 made that a hard rule.
+  - Twice, a concrete example in the prompt fixed what a rule alone couldn't.
+  - v5's Buenos Aires example matches an eval scenario, so I added an unseen Berlin variant to check for overfitting. It passed.
+  - Two judge criteria were too strict and were corrected; those were eval bugs, not prompt changes.
+  - Known flakiness: conflict resolution passed in 5 of 6 runs.
+- **Setup:** `npm run setup` checks Node, installs dependencies, and creates `.env.local` only if it's missing, without reading or changing an existing one.

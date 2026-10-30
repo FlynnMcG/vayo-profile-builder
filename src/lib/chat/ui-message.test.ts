@@ -71,3 +71,22 @@ describe("toChatRequest", () => {
     });
   });
 });
+
+describe("finishedProfileToolCalls", () => {
+  it("lists finished profile and conflict tool calls only", async () => {
+    const { finishedProfileToolCalls } = await import("./ui-message");
+    const messages: UIMessage[] = [
+      assistantWithTool,
+      {
+        id: "a2",
+        role: "assistant",
+        parts: [
+          { type: "tool-updateProfile", toolCallId: "p1", state: "output-available", input: {}, output: {} },
+          { type: "tool-resolveConflict", toolCallId: "p2", state: "input-available", input: {} },
+          { type: "tool-reportConflict", toolCallId: "p3", state: "output-available", input: {}, output: {} },
+        ],
+      },
+    ];
+    expect(finishedProfileToolCalls(messages)).toEqual(["p1", "p3"]);
+  });
+});

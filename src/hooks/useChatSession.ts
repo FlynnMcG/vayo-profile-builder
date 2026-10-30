@@ -3,14 +3,14 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useCallback, useMemo } from "react";
-import type { ChatMessage } from "@/lib/chat/schema";
-import { toChatMessage, toChatRequest } from "@/lib/chat/ui-message";
+import { toChatMessageView, toChatRequest, type ChatMessageView } from "@/lib/chat/ui-message";
 
-const WELCOME: ChatMessage = {
+const WELCOME: ChatMessageView = {
   id: "welcome",
   role: "assistant",
   content:
     "Hi! I'm your travel assistant. Tell me about how you like to travel and I'll build your profile.",
+  toolActivity: [],
 };
 
 // The server owns chat history, so only the newest message is sent.
@@ -21,17 +21,15 @@ const transport = new DefaultChatTransport({
   }),
 });
 
+const hasVisibleContent = (message: ChatMessageView | null): message is ChatMessageView =>
+  message !== null && (message.content !== "" || message.toolActivity.length > 0);
+
 // Owns chat state for the UI; components only depend on this hook's shape.
 export function useChatSession() {
   const { messages, sendMessage, status, error } = useChat({ transport });
 
   const chatMessages = useMemo(
-    () => [
-      WELCOME,
-      ...messages
-        .map(toChatMessage)
-        .filter((message): message is ChatMessage => message !== null && message.content !== ""),
-    ],
+    () => [WELCOME, ...messages.map(toChatMessageView).filter(hasVisibleContent)],
     [messages],
   );
 

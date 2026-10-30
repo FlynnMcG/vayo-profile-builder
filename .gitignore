@@ -35,3 +35,6 @@ coverage/
 .pnp
 .pnp.*
 !.env.example
+
+# local database
+data/

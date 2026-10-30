@@ -124,3 +124,51 @@ Running transcript of prompts and abbreviated responses/actions. Notable decisio
 **Response/actions:**
 - Swapped the files: PROCESS.md is the running prompt log, and DECISIONS.md holds notable decisions (annotated format, drafts for the user to edit). Updated the CLAUDE.md rule to match.
 - Committed with the user's message, correcting the file-name bullet to match the swap.
+
+**Prompt:**
+> Push it
+
+**Response/actions:**
+- Pushed `6fd4ca7` to `origin/main`.
+
+---
+
+## 9. SQLite choice
+
+**Prompt:**
+> Ok lets start with some basic tools. (+ DestinationInfo type from the assignment) This is the example they give for destination info. We'll keep that basic format. I'm thinking better-sqlite3 but that was a google sql that doesn't require much local setup result so I'm not particularly attached(besides preferring to keep to SQL). What do you think of that choice?
+
+**Response/actions:**
+- Tested Node's built-in `node:sqlite` on Node 26.8 (works, no warnings) and checked better-sqlite3 (v13, Node 22+, native module).
+- Recommended `node:sqlite`: no dependency, no native build, nearly the same sync API. Laid out the tool plan (Zod schema, seeded `destinations` table, store interface, tool with a step limit, chat history moving to SQLite).
+
+---
+
+## 10. Destination schema, store, tests, and tools
+
+**Prompt:**
+> Yeah I like that, nice that theirs a solid built in. Lets start with the DestinationInfoSchema, destinations table(lets do 10, make some varied common destinations. Make sure there's variety in the fields.) Don't love the unstructured visa notes, make that an enum or similar of something reasonable. Build some unit testing and make sure we can test it in memory, it will make evals easier later. Once that's done you can go ahead and wire it in as a tool and test it out. Give me some screenshots for reviews. At minimum we need a get and a list, along with CRUD just to be reasonable. Search by field would be nice but lets circle to that if we have time later.
+
+**Response/actions:**
+- Added Vitest 5 (bumped `@types/node` to ^22 for its peer range and for `node:sqlite` types; engines set to Node >=22.5). Used Vite 8's native `resolve.tsconfigPaths` and stubbed `server-only` for tests.
+- `DestinationInfoSchema` in Zod: `visaNotes` replaced with a `visaRequirement` enum (US passport holders, optional for domestic), budget tiers must ascend, seasons must be unique.
+- SQLite: `openDatabase()` (in-memory by default) with versioned migrations (`destinations`, `chat_messages`), app DB at `data/vayo.db` (gitignored). Seeded 10 varied destinations covering all seasons, every budget range, and 5 visa types including omitted.
+- `DestinationStore` with get/list/create/update/delete (case-insensitive names, Zod-validated writes). Chat history moved to SQLite.
+- Tools: `getDestinationInfo` and `listDestinations` (read-only) wired into `streamText` with `stopWhen: isStepCount(5)`. The chat service takes dependencies as arguments for evals. The UI shows tool activity chips.
+- 47 unit tests, all on in-memory DBs. Live testing found and fixed: missing separators between step texts, raw markdown (added a plain-text prompt rule), and a retry bug (an already-answered message caused a provider 400; it now returns 409).
+- Screenshots in `docs/screenshots/`. Search by field deferred.
+
+---
+
+## 11. Blank messages, chat deletion, DB clarification
+
+**Prompt:**
+> Lets also cover for a blank message, that can happen with network issues/refreshes. Easiest answer is probably to purge them from the history. To be clear on the DB, we aren't using in memory for the site itself right? Only the tests and eventual evals? Also I don't see a delete function for chat history but I might be blind
+>
+> FYI you went a little beyond what I suggested by moving the chat history but it looks ok we can keep it in this commit. Also, glad you know that NYC sucks in the summer.
+
+**Response/actions:**
+- `getMessages` now purges blank/whitespace-only rows for the chat before reading. Writes were already validated, so this guards against interrupted writes and older data.
+- Added `deleteChat(chatId)` to `ChatHistoryStore` (there wasn't one).
+- Confirmed the site uses the file DB (`data/vayo.db`, holding the browser chats). In-memory is only for `openDatabase()` with no path (tests/evals).
+- 52 tests passing.

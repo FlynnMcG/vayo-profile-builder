@@ -34,4 +34,44 @@ Notable decisions and changes. Each covers: what I was trying to do, what the to
 - **Got back:** The existing prompt was already a constant, so no code change was needed.
 - **Kept/changed:** Made it a standing rule in CLAUDE.md. Profile context will go in the user message, which keeps the system prompt cacheable and easy to evaluate.
 
-<!-- Candidates still to come: profile extraction approach, conflict handling, SQLite persistence, prompt evals with vitest, what got cut. -->
+---
+
+### 4. SQLite driver: built-in `node:sqlite` over better-sqlite3
+
+> "I'm thinking better-sqlite3 … I'm not particularly attached (besides preferring to keep to SQL)."
+
+- **Trying to:** Pick a local SQL database with as little setup as possible for reviewers.
+- **Got back:** better-sqlite3 is a native module, so it needs prebuilt binaries for the exact Node version or a local compile. Node's built-in `node:sqlite` worked on Node 26.8 with no warnings and has an almost identical synchronous API.
+- **Kept/changed:** Went with `node:sqlite`: no dependency and no native build. The cost is a Node 22.5 minimum, which barely matters since better-sqlite3 13 already needs Node 22.
+
+---
+
+### 5. Visa notes as an enum
+
+> "Don't love the unstructured visa notes, make that an enum or similar of something reasonable."
+
+- **Trying to:** Make visa data structured enough to filter and compare, not free text the model has to interpret.
+- **Got back:** `visaRequirement`: `none | eta | e_visa | visa_on_arrival | embassy_visa`, scoped to US passport holders and omitted for domestic trips. The same enum feeds the SQL `CHECK` constraint, so the database and the Zod schema can't drift apart.
+- **Kept/changed:** Requirements depend on nationality, so the "US passport" assumption is stated in the schema's `.describe()` (which the model sees) and in the prompt. A per-nationality table would be the real fix if this mattered.
+
+---
+
+### 6. Read-only tools, full CRUD in the store
+
+> "At minimum we need a get and a list, along with CRUD just to be reasonable."
+
+- **Trying to:** Have reasonable data operations without letting the model edit reference data.
+- **Got back:** The store has full CRUD (Zod-validated, case-insensitive names, 409-style duplicate error). Only `getDestinationInfo` and `listDestinations` are exposed as model tools. Tool handlers are plain functions wrapped by `tool()`, so tests call them directly.
+- **Kept/changed:** Kept write operations out of the model's reach: a chat about preferences shouldn't be able to rewrite Tokyo's budget. `listDestinations` returns a summary (no budget or visa) to save tokens, and `get` provides the details.
+
+---
+
+### 7. Bugs caught by live testing
+
+- **Trying to:** Check the tool flow end to end and grab screenshots.
+- **Got back:** Three issues that unit tests didn't catch:
+  1. Text from separate steps was joined with no separator ("budget.Based").
+  2. The model wrote markdown that the UI shows raw.
+  3. Retrying an already-answered message left the history ending with an assistant turn, and Haiku 5.5 rejected it with a 400 ("does not support assistant message prefill").
+- **Kept/changed:** (1) The client and server both join step text as paragraphs, with a test. (2) Added a plain-text rule to the static prompt instead of adding a markdown renderer. (3) The service now returns a 409 `MessageAlreadyAnsweredError` before calling the model, with a test.
+- **Follow-up:** Blank messages from network issues or refreshes are now purged from history on read, so an empty turn never reaches the provider.

@@ -194,3 +194,20 @@ Profile is read-only outside chat, so `PATCH /api/profile` is removed (it would 
 **If this had to run at scale:** This whole schema/database/UI is explicitly single user. At the most basic level it would need to be refined to properly use userIds, make sure that the fields in the travel profile are more typed/uniform to allow things like searching at scale and add auth/login so there's methods to control users wasting tokens or abusing the model access. I probably would actually keep Haiku at scale, or maybe switch to something else cheap from gemini or openAI since anthropic can be a little iffy on user facing speech tasks.
 
 **What you cut/didn't build and why:** Multi user, UI polish, search by field, extended eval tuning, full test coverage, testing multiple providers explicitly, explicitly handling the assistant correcting or changing it's mind, UI for prompting the user to fill out a field or resolve a conflict. I tried to make sure I had time to get the core product out and preemptively cut anything that was both nice to have and a bigger time commitment. I think I probably should have cut a few extras like complex profile options(travel documents) and letting the bot override conflicts in one pass(it felt annoying to have to confirm every time but it added complexity)
+**Prompt:**
+> Keep the directions, keep my part at the bottom, greatly trim the rest. Short, useful, to the point, easy to run it from the given instructions.
+
+**Response/actions:**
+- Cut the README from about 230 lines to about 70: run steps, provider/credentials (env vars, switching model/provider, missing/invalid key behavior), test/eval commands, pointers to PROCESS/DECISIONS, and the user's "another day" section unchanged. Detailed design notes remain in DECISIONS.md.
+
+**Prompt:**
+> Cool, do a short sanity check that the directions work.
+
+**Response/actions:**
+- Fresh clone: `npm run setup` (installed, created `.env.local`), `npm run dev` (page loads, DB seeded, missing-key message as documented), `npm test` (176 passed). Real-key chat checked on the main dev server.
+
+**Prompt:**
+> Commit and push
+
+**Response/actions:**
+- Committed the README trim and pushed.
